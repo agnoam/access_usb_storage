@@ -23,7 +23,19 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+
+    AccessUsbStorage.listenToUsbChange(callback: (dynamic e) {
+      print(e['event'] == UsbEvents.Attach ? 'Attach' : 'Detached');
+      _refreshState();
+    });
+
     initUSBDevicesState();
+  }
+
+  @override
+  void dispose() {
+    AccessUsbStorage.deleteListener();
+    super.dispose();
   }
 
   Future<void> initUSBDevicesState() async {
@@ -79,9 +91,7 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _saveFile({ String content = 'Test content' }) async {
     try {
-      // File file = File('${_availableDevices[0]}/some_generated_file.txt');
-      // await file.writeAsString(content);
-      await AccessUsbStorage.writeFile(_availableDevices[0], '/abcd/myTest.txt', content);
+      await AccessUsbStorage.write(_availableDevices[0], '/some_generated_file.txt', content, SavingType.StringData);
       print('File have written to the USB storage');
     } catch(ex) {
       print('_saveFile() ex: $ex');
@@ -90,8 +100,8 @@ class _MyAppState extends State<MyApp> {
 
   Future<String> _openFile() async {
     try {
-      File file = File('${_availableDevices[0]}/some_generated_file.txt');
-      return file.readAsString();
+      String content = await AccessUsbStorage.read(_availableDevices[0], '/some_generated_file.txt', SavingType.StringData);
+      return content;
     } catch(ex) {
       print('_openFile() ex: $ex');
       return '';
@@ -100,8 +110,7 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _deleteFile() async {
     try {
-      File file = File('${_availableDevices[0]}/some_generated_file.txt');
-      await file.delete();
+      AccessUsbStorage.delete(_availableDevices[0], '/some_generated_file.txt');
       print('File deleted successfuly');
     } catch(ex) {
       print('_deleteFile() ex: $ex');
@@ -155,7 +164,6 @@ class _MyAppState extends State<MyApp> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text('Running on: $_platformVersion'),
               Text(_availableDevices.toString()),
               
               _fileContent.isNotEmpty ? 

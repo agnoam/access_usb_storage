@@ -6,8 +6,5 @@
 
     <application
         android:requestLegacyExternalStorage="true">
-        <activity>
-            <intent-filter></intent-filter>
-        </activity>
     </application>
 </manifest>

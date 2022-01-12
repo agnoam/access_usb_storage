@@ -1,6 +1,6 @@
 # access_usb_storage_example
 
-Demonstrates how to use the access_usb_storage plugin.
+This is a Flutter implementation for the Android [libaums plugin](https://github.com/magnusja/libaums)
 
 ## Getting Started
 

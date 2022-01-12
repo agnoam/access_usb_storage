@@ -13,39 +13,39 @@ import android.os.Build
 import android.util.Log
 import androidx.annotation.NonNull
 import com.github.mjdev.libaums.UsbMassStorageDevice
-import com.github.mjdev.libaums.fs.FileSystem
-import com.github.mjdev.libaums.fs.UsbFile
-import com.github.mjdev.libaums.fs.UsbFileInputStream
-import com.github.mjdev.libaums.fs.UsbFileOutputStream
+import com.github.mjdev.libaums.fs.*
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import org.json.JSONObject
-import java.io.File
-import java.io.IOException
+import java.io.*
+import java.nio.Buffer
 
 
 /** AccessUsbStoragePlugin */
-class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
+class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
   /// The MethodChannel that will the communication between Flutter and native Android
   ///
   /// This local reference serves to register the plugin with the Flutter Engine and unregister it
   /// when the Flutter Engine is detached from the Activity
   private lateinit var channel : MethodChannel
+  private lateinit var eventChannel: EventChannel
   private lateinit var context: Context
 
   // Custom
   private var reqPermissionResultObj: Result? = null
   private var deviceMounted: UsbMassStorageDevice? = null
-  private var deviceStateChangedResult: Result? = null
+  private var deviceStateChangedEventSink: EventChannel.EventSink? = null
 
   // Constants
   companion object {
     private const val TAG: String = "AccessUsbStoragePlugin"
     private const val ACTION_USB_PERMISSION: String = "com.agnoam.usb.storage.plugin.USB_PERMISSION"
     private const val USB_PATH_SPLITTER: Char = '/'
+    private const val EVENT_CHANNEL_NAME: String = "access_usb_state_events"
   }
 
   private val eventsHandler: BroadcastReceiver = object : BroadcastReceiver() {
@@ -71,6 +71,10 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
     // Registers also ATTACH, DETACHED Usb event handlers
     context.registerReceiver(eventsHandler, IntentFilter(ACTION_USB_DEVICE_ATTACHED))
     context.registerReceiver(eventsHandler, IntentFilter(ACTION_USB_DEVICE_DETACHED))
+
+    // Registers Dart's EventChannel
+    eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, EVENT_CHANNEL_NAME)
+    eventChannel.setStreamHandler(this)
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
@@ -78,8 +82,8 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
     when (call.method) {
       "availableUSBStorageDevices" -> availableStorageHandler(result)
       "requestUSBPermission" -> requestPermissionHandler(call.arguments.toString(), result)
-      "USBChangeEventListener" -> addUsbStateListener(result)
-      "deleteListener" -> removeUsbStateListener(result)
+//      "USBChangeEventListener" -> addUsbStateListener(result)
+//      "deleteListener" -> removeUsbStateListener(result)
       "write" -> writeFileHandler(call.arguments as Map<String, Any>, result)
       "read" -> readFileHandler(call.arguments as Map<String, String>, result)
       "delete" -> deleteFileHandler(call.arguments as Map<String, String>, result)
@@ -90,20 +94,31 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+    Log.d(TAG, "Plugin is Detached from engine (flutter)")
     channel.setMethodCallHandler(null)
 
     unmountDevice()
     context.unregisterReceiver(eventsHandler)
   }
 
-  private fun addUsbStateListener(@NonNull result: Result) {
-    deviceStateChangedResult = result
-    result.success("")
+  /**
+   * EventChannel override method, emits on each new listening
+   *
+   * @param arguments Arguments given by the dart side
+   * @param events Events sink
+   */
+  override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+    // Dart client registers to the event channel
+    deviceStateChangedEventSink = events
   }
 
-  private fun removeUsbStateListener(@NonNull result: Result) {
-    deviceStateChangedResult = null
-    result.success("")
+  /**
+   * EventChannel override method, emits on each cancel (listener remove)
+   * @param arguments Some arguments from dart side
+   */
+  override fun onCancel(arguments: Any?) {
+    // Dart client stops to listen
+    deviceStateChangedEventSink = null
   }
 
   /**
@@ -113,16 +128,21 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
    * @param newState The new state to dispatch
    */
   private fun dispatchUsbChangedEvent(intent: Intent, newState: UsbChangeEvents) {
+    Log.e(TAG, "Dispatching $newState event");
+
     val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
     device?.apply {
-      when (newState) {
-        UsbChangeEvents.Attach -> getUsbMassStorageDeviceByKey(deviceName)?.init()
-        UsbChangeEvents.Detached -> getUsbMassStorageDeviceByKey(deviceName)?.close()
-      }
+      // Commented because it have to request a permission for the device
+//      when (newState) {
+//        UsbChangeEvents.Attach -> getUsbMassStorageDeviceByKey(deviceName)?.init()
+//        UsbChangeEvents.Detached -> getUsbMassStorageDeviceByKey(deviceName)?.close()
+//      }
 
       val returnObject = JSONObject()
       returnObject.put("event", newState.toString())
-      deviceStateChangedResult?.success(returnObject.toString())
+      returnObject.put("deviceId", deviceName)
+
+      deviceStateChangedEventSink?.success(returnObject.toString())
     }
   }
 
@@ -283,6 +303,14 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
     deviceMounted = device
   }
 
+  private fun ejectDeviceHandler(@NonNull result: Result) {
+    try {
+
+    } catch (ex: Exception) {
+
+    }
+  }
+
   /**
    * When you done with all the read and write, remove (unMount) the device.
    * In case the device is not mounted, it will ignore
@@ -390,12 +418,15 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
    * @param content The content of the file (as string for now)
    * @param savingType Which way to save the file, as String or ByteArray
    */
-  private fun writeFileInDir(rootDir: UsbFile, containingDirPath: String, filename: String, content: Any, savingType: SavingType) {
+  private fun writeFileInDir(
+    rootDir: UsbFile, containingDirPath: String,
+    filename: String, content: Any, savingType: SavingType
+  ) {
     // Parent directory of the file
-    val parentDir: UsbFile? = rootDir.search(containingDirPath)
+    val parentDir: UsbFile = rootDir.search(containingDirPath)
+      ?: throw Exception("Parent dir does not exists")
 
     try {
-      if (parentDir != null) {
         val file: UsbFile = parentDir.createFile(filename)
         val os = UsbFileOutputStream(file)
 
@@ -406,11 +437,8 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
           os.write(content as ByteArray)
 
         os.close()
-      } else {
-        throw Exception("Parent dir does not exists")
-      }
     } catch(fileExistsEx: IOException) {
-      val file: UsbFile? = parentDir?.search(filename)
+      val file: UsbFile? = parentDir.search(filename)
       if (file != null)
          overrideFile(rootDir, file, content, savingType)
     }
@@ -470,7 +498,7 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
       ?: throw IOException("File does not exists")
 
     fileToDelete.delete()
-    unmountDevice()
+//    unmountDevice()
   }
 
   /**
@@ -490,10 +518,10 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
 
       when (savingType) {
         SavingType.BytesData -> result.success(fileContent as ByteArray)
-        SavingType.StringData -> result.success(fileContent as String)
+        SavingType.StringData -> result.success(fileContent.toString())
       }
     } catch (ex: Exception) {
-      result.error(TAG, "Exception occurred during delete command", ex);
+      result.error(TAG, "Exception occurred during read command", ex);
     }
   }
 
@@ -517,33 +545,41 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler {
     val file: UsbFile = deviceFs.rootDirectory.search(path)
       ?: throw IOException("File does not exists")
 
-    unmountDevice()
+    return readFile(file, deviceFs, outputType)
 
-    val ins: UsbFileInputStream = readFile(file, deviceFs.chunkSize)
-    val bytes: ByteArray = ins.readBytes()
-    if (outputType == SavingType.BytesData)
-      return bytes
-    if (outputType == SavingType.StringData)
-      return bytes.toString()
+    // Closing file connection
+    // inputStream.close()
 
-    throw Exception("Unsupported return type")
+    // unmountDevice()
+    // throw Exception("Unsupported return type")
   }
 
   /**
    * Actual read file implementation
    *
    * @param file `UsbFile` object of wanted file
-   * @return UsbFileInputStream of read file
+   * @return The content as ByteArray or as a String
    * @throws IOException in case of read fails
    */
-  private fun readFile(file: UsbFile, chunkSize: Int): UsbFileInputStream {
-    val inputStream = UsbFileInputStream(file)
-    val buffer = ByteArray(chunkSize)
-    inputStream.read(buffer)
+  private fun readFile(file: UsbFile, fs: FileSystem, outputType: SavingType): Any {
+    val inputStream: InputStream = UsbFileStreamFactory.createBufferedInputStream(file, fs)
+    val outputStream = ByteArrayOutputStream()
 
-    // Closing file connection
-    inputStream.close()
+    inputStream.use { input ->
+      outputStream.use { output ->
+        input.copyTo(output)
+      }
+    }
 
-    return inputStream
+    val byteArray = outputStream.toByteArray()
+    val outputString = String(byteArray, Charsets.UTF_8)
+    Log.d(TAG, "Output string from read file: $outputString")
+
+    if (outputType == SavingType.BytesData)
+      return byteArray
+    if (outputType == SavingType.StringData)
+      return outputString
+
+    throw Exception("Unsupported outputType")
   }
 }
