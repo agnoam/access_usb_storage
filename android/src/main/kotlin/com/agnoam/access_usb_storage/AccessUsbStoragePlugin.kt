@@ -362,7 +362,7 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler, EventChannel.Str
 
       deviceMounted ?: mountDevice(device)
 
-      val rootDir: UsbFile = device.partitions[0].fileSystem.rootDirectory
+      val rootDir: UsbFile = deviceMounted!!.partitions[0].fileSystem.rootDirectory
       val pathSplit: List<String> = relativePath.split(USB_PATH_SPLITTER)
       val filename: String  = pathSplit.last()
       val parentDirPath: String = relativePath.replace(filename, "")
@@ -541,7 +541,7 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler, EventChannel.Str
 
     deviceMounted ?: mountDevice(device)
 
-    val deviceFs: FileSystem = device.partitions[0].fileSystem
+    val deviceFs: FileSystem = deviceMounted!!.partitions[0]?.fileSystem
     val file: UsbFile = deviceFs.rootDirectory.search(path)
       ?: throw IOException("File does not exists")
 
@@ -574,6 +574,9 @@ class AccessUsbStoragePlugin: FlutterPlugin, MethodCallHandler, EventChannel.Str
     val byteArray = outputStream.toByteArray()
     val outputString = String(byteArray, Charsets.UTF_8)
     Log.d(TAG, "Output string from read file: $outputString")
+
+    inputStream.close()
+    outputStream.close()
 
     if (outputType == SavingType.BytesData)
       return byteArray
